@@ -2,13 +2,33 @@ import telebot
 import pandas as pd
 from fpdf import FPDF
 import os
-from datetime import datetime
+import requests
+from flask import Flask
+from threading import Thread
 
-# --- CONFIGURATION ---
-TOKEN = "8022132262:AAEJjnG344neYsB1RZk6qrz-54KDfjy3e6I"
+# --- 1. LE FAUX SERVEUR WEB (POUR RENDER GRATUIT) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Le Bot Médical est en ligne !"
+
+def run():
+    # Render donne un port via la variable d'environnement PORT
+    # Si pas de port (sur ton PC), on utilise 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+# ----------------------------------------------------
+
+# --- CONFIGURATION DU BOT ---
+TOKEN = "8569842005:AAEofUTQz22Vk4Gx8ZjiyVqzEQrNbB8AIMQ"
 bot = telebot.TeleBot(TOKEN)
 
-# Nettoyage webhook
+# Suppression webhook pour éviter les conflits
 try: bot.remove_webhook()
 except: pass
 
@@ -25,24 +45,19 @@ class PDF_CNSS(FPDF):
     def header_custom(self, mois_ref):
         self.set_margins(10, 10, 10)
         self.set_auto_page_break(True, margin=15)
-        
-        # --- LARGEURS EXACTES (Total = 190mm) ---
         self.w_cols = [12, 63, 35, 35, 20, 25] 
         total_width = sum(self.w_cols)
         
-        # --- EN-TÊTE ---
         self.set_xy(10, 10)
         h_box = 35 
 
-        # 1. BLOC GAUCHE
+        # BLOCS EN-TÊTE
         w_left = self.w_cols[0] + self.w_cols[1]
         self.set_line_width(0.4)
         self.rect(10, 10, w_left, h_box)
-        
         if os.path.exists(CONFIG["LOGO_LOCAL"]):
             self.image(CONFIG["LOGO_LOCAL"], x=10 + (w_left - 25)/2, y=14, w=25)
 
-        # 2. BLOC CENTRE
         x_center = 10 + w_left
         w_center = self.w_cols[2] + self.w_cols[3] + self.w_cols[4]
         self.rect(x_center, 10, w_center, h_box)
@@ -50,10 +65,8 @@ class PDF_CNSS(FPDF):
         self.set_xy(x_center, 12)
         self.set_font("Arial", 'B', 10)
         self.cell(w_center, 4, "ETAT DES FRAIS DE CONTROLES MEDICAUX", 0, 1, 'C')
-        
         self.set_xy(x_center, 17)
         self.cell(w_center, 4, f"AU TITRE DU MOIS {mois_ref}", 0, 1, 'C')
-        
         self.set_xy(x_center, 23)
         self.set_font("Arial", 'B', 7)
         self.cell(w_center, 3, "APPLICATION ART.32.37.47 ET 57 DU DAHIR", 0, 1, 'C')
@@ -62,11 +75,9 @@ class PDF_CNSS(FPDF):
         self.set_xy(x_center, 31)
         self.cell(w_center, 3, "1392 (27 JUILLET 1972 )", 0, 1, 'C')
 
-        # 3. BLOC DROITE
         x_right = x_center + w_center
         w_right = self.w_cols[5]
         self.rect(x_right, 10, w_right, h_box)
-        
         self.set_xy(x_right, 12)
         self.set_font("Arial", 'B', 7)
         self.multi_cell(w_right, 3, "DIRECTION DES PRESTATIONS", 0, 'C')
@@ -76,41 +87,30 @@ class PDF_CNSS(FPDF):
         self.set_font("Arial", 'B', 8)
         self.cell(w_right, 3, "Réf : 312-2-05", 0, 1, 'C')
 
-        # --- LIGNE MÉDECIN ---
+        # LIGNE MEDECIN
         self.set_xy(10, 10 + h_box) 
         self.set_font("Arial", 'B', 8) 
         text_med = f"NOM DU MEDECIN CONTROLEUR : {CONFIG['MEDECIN']} / ADRESSE : {CONFIG['ADRESSE']}"
         self.cell(total_width, 8, text_med, 1, 1, 'C')
 
-        # --- TITRES TABLEAU (CORRECTION ICI) ---
-        # Police réduite à 7 pour que ça rentre bien
+        # TITRES
         self.set_font("Arial", 'B', 7)
         titles = ["N° ORDRE", "NOM PRENOM", "N° IMMATRICULATION", "N° DOSSIER", "MONTANT DES\nHONORAIRES", "NATURE DES\nPRESTATIONS (1)"]
-        
         y_before = self.get_y()
         x_curr = 10
         h_title = 10 
-
         for i, title in enumerate(titles):
             self.set_xy(x_curr, y_before)
-            # Dessine le cadre
             self.cell(self.w_cols[i], h_title, "", 1)
-            
-            # Positionnement précis du texte
             if '\n' in title:
-                # Si 2 lignes : on commence un peu plus haut (2mm du bord) avec un interligne serré (3mm)
                 self.set_xy(x_curr, y_before + 2)
                 self.multi_cell(self.w_cols[i], 3, title, 0, 'C')
             else:
-                # Si 1 ligne : on centre verticalement (3.5mm du bord)
                 self.set_xy(x_curr, y_before + 3.5)
                 self.multi_cell(self.w_cols[i], 3, title, 0, 'C')
-            
             x_curr += self.w_cols[i]
-
         self.set_y(y_before + h_title)
 
-# --- OUTILS ---
 def trouver_mois(df, col_date):
     try:
         dates = pd.to_datetime(df[col_date], errors='coerce').dropna()
@@ -119,10 +119,9 @@ def trouver_mois(df, col_date):
         return f"{MOIS_FR[mode.month - 1]} {mode.year}"
     except: return "INCONNU"
 
-# --- BOT ---
 @bot.message_handler(commands=['start'])
 def welcome(m): 
-    bot.reply_to(m, "👋 Bot CNSS V5 (Correction Titres).\nEnvoie ton fichier Excel.")
+    bot.reply_to(m, "👋 Bot CNSS En Ligne (Render).\nEnvoie ton fichier Excel.")
 
 @bot.message_handler(content_types=['document'])
 def handle_excel(message):
@@ -134,14 +133,11 @@ def handle_excel(message):
             return
         
         bot.reply_to(message, "⏳ Génération du PDF...")
-
-        # Téléchargement
         file_info = bot.get_file(message.document.file_id)
         input_path = f"input_{file_name}"
         with open(input_path, 'wb') as f: f.write(bot.download_file(file_info.file_path))
         files_to_clean.append(input_path)
 
-        # Lecture
         df = pd.read_excel(input_path)
         cols = {c.lower().strip(): c for c in df.columns}
 
@@ -156,10 +152,8 @@ def handle_excel(message):
             bot.reply_to(message, "❌ Erreur: Colonne 'Nom' introuvable.")
             return
 
-        # Génération
         pdf = PDF_CNSS()
         pdf.add_page()
-        
         mois_ref = trouver_mois(df, col_date)
         pdf.header_custom(mois_ref)
 
@@ -171,13 +165,11 @@ def handle_excel(message):
         for _, row in df.iterrows():
             nom = str(row[col_nom])
             if pd.isna(row[col_nom]) or len(nom.strip()) < 2 or str(row[col_nom]).lower() == 'nan': continue
-            
             prenom = str(row[col_prenom]) if col_prenom and not pd.isna(row[col_prenom]) else ""
             full_name = f"{nom} {prenom}".strip().upper()
             imma = str(row[col_imma]) if col_imma and not pd.isna(row[col_imma]) else ""
             dos = str(row[col_dos]) if col_dos and not pd.isna(row[col_dos]) else ""
             pres = str(row[col_pres]) if col_pres and not pd.isna(row[col_pres]) else ""
-
             h = 6
             pdf.cell(w[0], h, str(count), 1, 0, 'C')
             pdf.cell(w[1], h, full_name[:35], 1, 0, 'L') 
@@ -185,11 +177,9 @@ def handle_excel(message):
             pdf.cell(w[3], h, dos, 1, 0, 'C')
             pdf.cell(w[4], h, f"{CONFIG['PRIX']:.2f}", 1, 0, 'C')
             pdf.cell(w[5], h, pres[:15], 1, 1, 'C')
-
             total += CONFIG['PRIX']
             count += 1
 
-        # Total
         pdf.set_font("Arial", 'B', 10)
         w_tot = sum(w[:4])
         pdf.cell(w_tot, 8, "TOTAL", 1, 0, 'C')
@@ -197,20 +187,18 @@ def handle_excel(message):
         pdf.set_font("Arial", '', 8)
         pdf.cell(w[5], 8, "DH", 1, 1, 'L')
 
-        # Envoi
         output = f"Frais_{file_name.replace('.xlsx','.pdf')}"
         pdf.output(output)
         files_to_clean.append(output)
 
         with open(output, 'rb') as f: bot.send_document(message.chat.id, f)
-        print(f"✅ PDF envoyé : {file_name}")
 
     except Exception as e:
-        print(e)
         bot.reply_to(message, f"❌ Erreur: {e}")
     finally:
         for f in files_to_clean: 
             if os.path.exists(f): os.remove(f)
 
-print("✅ Bot CNSS en ligne (V5)...")
+# --- LANCEMENT DU FAUX SERVEUR + BOT ---
+keep_alive()
 bot.infinity_polling()
